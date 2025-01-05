@@ -194,7 +194,7 @@ def handle_client(client_socket, client_address):
         username = server.get_username()
         logger.info(f"User '{username}' authenticated from {client_address}")
 
-        # Handle shell requests automatically since check_channel_shell_request accepts them
+        # Automatically handle the shell in a new thread
         shell_thread = threading.Thread(target=handle_shell, args=(channel, username, client_address))
         shell_thread.daemon = True
         shell_thread.start()
