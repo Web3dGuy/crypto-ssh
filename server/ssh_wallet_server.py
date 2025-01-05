@@ -5,11 +5,11 @@ import socket
 import threading
 import sys
 import os
-import time
 import secrets
 import logging
 from dotenv import load_dotenv
 from web3 import Web3, HTTPProvider
+from eth_account.messages import encode_defunct
 
 # Load environment variables
 load_dotenv()
@@ -98,53 +98,12 @@ class WalletAuthServer(paramiko.ServerInterface):
     def check_auth_keyboard_interactive(self, username, submethods, details):
         # Generate a unique nonce (challenge) for this authentication attempt
         nonce = secrets.token_hex(16)
+        self.nonce = nonce
         NONCE_MAP[self.client_address] = nonce
         logger.info(f"Generated nonce for {self.client_address}: {nonce}")
 
-        # Define the prompt
-        prompts = [("Please sign this message to authenticate:", False)]
-
-        # Send the prompts to the client
-        return paramiko.AUTH_PARTIALLY_SUCCESSFUL, prompts
-
-    def check_auth_keyboard_interactive_response(self, responses):
-        """
-        Custom method to handle responses to keyboard-interactive authentication.
-        """
-        nonce = NONCE_MAP.get(self.client_address)
-        if not nonce:
-            logger.warning(f"No nonce found for {self.client_address}")
-            return paramiko.AUTH_FAILED
-
-        signature = responses[0] if responses else ''
-        logger.debug(f"Received signature from {self.client_address}: {signature}")
-
-        if not signature:
-            logger.warning(f"No signature received from {self.client_address}")
-            return paramiko.AUTH_FAILED
-
-        # Verify the signature
-        try:
-            recovered_address = w3.eth.account.recover_message(
-                text=nonce,
-                signature=signature
-            )
-            logger.info(f"Recovered Address: {recovered_address.lower()} from {self.client_address}")
-        except Exception as e:
-            logger.error(f"Signature verification error from {self.client_address}: {e}")
-            return paramiko.AUTH_FAILED
-
-        recovered_address = recovered_address.lower()
-
-        # Check if the recovered address is in the mapping
-        user = WALLET_USER_MAP.get(recovered_address)
-        if user:
-            self.username = user
-            logger.info(f"Authentication successful for user: {user} from {self.client_address}")
-            return paramiko.AUTH_SUCCESSFUL
-        else:
-            logger.warning(f"Authentication failed: Unknown wallet address {recovered_address} from {self.client_address}")
-            return paramiko.AUTH_FAILED
+        # Return PARTIALLY_SUCCESSFUL to indicate keyboard-interactive is required
+        return paramiko.AUTH_PARTIALLY_SUCCESSFUL
 
     def get_username(self):
         return self.username
@@ -174,26 +133,75 @@ def handle_client(client_socket, client_address):
     username = server.get_username()
     logger.info(f"User '{username}' authenticated from {client_address}")
 
-    # Open a session and execute a simple shell
+    # Retrieve the nonce and wait for the signature
+    nonce = NONCE_MAP.get(client_address[0])
+    if not nonce:
+        logger.warning(f"No nonce found for {client_address}")
+        channel.send("Authentication failed.\n")
+        channel.close()
+        return
+
     try:
-        channel.send(f"Welcome {username}! You are authenticated via your crypto wallet.\n")
+        # Send the prompt to the client
+        prompt = f"Please sign this message to authenticate: {nonce}\n"
+        channel.send(prompt)
+        logger.debug(f"Sent nonce to {client_address}: {nonce}")
+
+        # Receive the signature from the client
+        signature = channel.recv(1024).decode('utf-8').strip()
+        logger.debug(f"Received signature from {client_address}: {signature}")
+
+        if not signature:
+            logger.warning(f"No signature received from {client_address}")
+            channel.send("Authentication failed.\n")
+            channel.close()
+            return
+
+        # Verify the signature
+        try:
+            recovered_address = w3.eth.account.recover_message(
+                encode_defunct(text=nonce),
+                signature=signature
+            )
+            recovered_address = recovered_address.lower()
+            logger.info(f"Recovered Address: {recovered_address} from {client_address}")
+        except Exception as e:
+            logger.error(f"Signature verification error from {client_address}: {e}")
+            channel.send("Authentication failed.\n")
+            channel.close()
+            return
+
+        # Check if the recovered address is in the mapping
+        user = WALLET_USER_MAP.get(recovered_address)
+        if user:
+            logger.info(f"Authentication successful for user: {user} from {client_address}")
+            channel.send(f"Welcome {user}! You are authenticated via your crypto wallet.\n")
+        else:
+            logger.warning(f"Authentication failed: Unknown wallet address {recovered_address} from {client_address}")
+            channel.send("Authentication failed.\n")
+            channel.close()
+            return
+
+        # Provide instructions for the interactive shell
         channel.send("Type 'exit' to close the connection.\n")
+
+        # Start interactive shell
         while True:
             channel.send("shell> ")
             data = channel.recv(1024).decode('utf-8').strip()
             if not data:
                 break
-            logger.debug(f"Received command from {username}@{client_address}: {data}")
+            logger.debug(f"Received command from {user}@{client_address}: {data}")
             if data.lower() == 'exit':
                 channel.send("Goodbye!\n")
                 channel.close()
-                logger.info(f"Connection closed for {username}@{client_address}")
+                logger.info(f"Connection closed for {user}@{client_address}")
                 break
             else:
                 response = f"You typed: {data}\n"
                 channel.send(response)
     except Exception as e:
-        logger.error(f"Channel exception for {username}@{client_address}: {e}")
+        logger.error(f"Exception handling client {client_address}: {e}")
     finally:
         transport.close()
 
