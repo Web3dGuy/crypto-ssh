@@ -5,7 +5,6 @@ import socket
 import threading
 import sys
 import os
-import secrets
 import logging
 from dotenv import load_dotenv
 from web3 import Web3, HTTPProvider
@@ -69,8 +68,8 @@ else:
     host_key = paramiko.RSAKey(filename=HOST_KEY_FILE)
     logger.info(f"Loaded SSH host key from {HOST_KEY_FILE}")
 
-# Dictionary to store nonces per client address
-NONCE_MAP = {}
+# Known authentication message
+AUTH_MESSAGE = "SSH Authentication"
 
 class WalletAuthServer(paramiko.ServerInterface):
     def __init__(self, client_address):
@@ -95,9 +94,6 @@ class WalletAuthServer(paramiko.ServerInterface):
         if not signature.startswith('0x'):
             logger.warning("Invalid signature format.")
             return paramiko.AUTH_FAILED
-
-        # Define the known message that was signed
-        AUTH_MESSAGE = "SSH Authentication"
 
         # Verify the signature against the AUTH_MESSAGE
         try:
@@ -138,6 +134,34 @@ class WalletAuthServer(paramiko.ServerInterface):
     def get_username(self):
         return self.username
 
+def handle_shell(channel, username, client_address):
+    try:
+        channel.send(f"Welcome {username}! You are authenticated via your crypto wallet.\n")
+        channel.send("Type 'exit' to close the connection.\n")
+        logger.debug(f"Sent welcome messages to {username}@{client_address}")
+
+        while True:
+            channel.send("shell> ")
+            logger.debug(f"Sent shell prompt to {username}@{client_address}")
+            data = channel.recv(1024).decode('utf-8').strip()
+            if not data:
+                logger.info(f"No data received from {username}@{client_address}. Closing connection.")
+                break
+            logger.info(f"Received command from {username}@{client_address}: {data}")
+            if data.lower() == 'exit':
+                channel.send("Goodbye!\n")
+                logger.info(f"Exit command received from {username}@{client_address}. Closing connection.")
+                break
+            else:
+                response = f"You typed: {data}\n"
+                channel.send(response)
+                logger.debug(f"Sent response to {username}@{client_address}: {response.strip()}")
+    except Exception as e:
+        logger.error(f"Exception in shell for {username}@{client_address}: {e}")
+    finally:
+        logger.info(f"Closing shell for {username}@{client_address}")
+        channel.close()
+
 def handle_client(client_socket, client_address):
     username = None  # Initialize username
     try:
@@ -166,27 +190,10 @@ def handle_client(client_socket, client_address):
         username = server.get_username()
         logger.info(f"User '{username}' authenticated from {client_address}")
 
-        # Start interactive shell
-        channel.send(f"Welcome {username}! You are authenticated via your crypto wallet.\n")
-        channel.send("Type 'exit' to close the connection.\n")
-        logger.debug(f"Sent welcome messages to {username}@{client_address}")
-
-        while True:
-            channel.send("shell> ")
-            logger.debug(f"Sent shell prompt to {username}@{client_address}")
-            data = channel.recv(1024).decode('utf-8').strip()
-            if not data:
-                logger.info(f"No data received from {username}@{client_address}. Closing connection.")
-                break
-            logger.info(f"Received command from {username}@{client_address}: {data}")
-            if data.lower() == 'exit':
-                channel.send("Goodbye!\n")
-                logger.info(f"Exit command received from {username}@{client_address}. Closing connection.")
-                break
-            else:
-                response = f"You typed: {data}\n"
-                channel.send(response)
-                logger.debug(f"Sent response to {username}@{client_address}: {response.strip()}")
+        # Start shell handling in a new thread
+        shell_thread = threading.Thread(target=handle_shell, args=(channel, username, client_address))
+        shell_thread.daemon = True
+        shell_thread.start()
 
     except Exception as e:
         logger.error(f"Exception handling client {client_address}: {e}")

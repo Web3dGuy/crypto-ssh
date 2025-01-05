@@ -118,7 +118,7 @@ def main():
 
         logger.info("Authentication successful.")
 
-        # Open a session
+        # Open a session and invoke shell
         channel = transport.open_session()
         channel.invoke_shell()
         logger.info("Interactive shell session started.")
