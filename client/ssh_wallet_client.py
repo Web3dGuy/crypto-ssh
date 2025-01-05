@@ -38,24 +38,14 @@ if not WALLET_ADDRESS or not PRIVATE_KEY:
 # Initialize Web3
 w3 = Web3()
 
-def authenticate_with_wallet(prompt):
+def authenticate_with_wallet(nonce):
     """
-    Extracts the nonce from the prompt and signs it with the private key.
+    Signs the nonce using the private key.
     """
     try:
-        logger.debug(f"Authenticating with wallet. Prompt received: {prompt}")
-        # Extract the nonce from the prompt
-        # Expected format: "Please sign this message to authenticate: <nonce>"
-        if "Please sign this message to authenticate:" in prompt:
-            nonce = prompt.split(':')[-1].strip()
-            logger.info(f"Received nonce to sign: {nonce}")
-        else:
-            logger.error("Unexpected prompt format.")
-            return None
-
+        logger.debug(f"Authenticating with wallet. Nonce received: {nonce}")
         # Sign the nonce using the private key
         message = nonce
-        # Encode the message as defunct to ensure compatibility
         message_encoded = encode_defunct(text=message)
         signed_message = Account.sign_message(message_encoded, private_key=PRIVATE_KEY)
         signature = '0x' + signed_message.signature.hex()
@@ -64,29 +54,6 @@ def authenticate_with_wallet(prompt):
     except Exception as e:
         logger.error(f"Error during signing: {e}")
         return None
-
-def keyboard_interactive_handler(title, instructions, prompt_list):
-    """
-    Handler for keyboard-interactive authentication.
-    Extracts the nonce, signs it, and returns the signature.
-    """
-    logger.debug("Keyboard-interactive authentication handler invoked.")
-    responses = []
-    for prompt, echo in prompt_list:
-        logger.debug(f"Prompt received: {prompt} | Echo: {echo}")
-        if "Please sign this message to authenticate:" in prompt:
-            signature = authenticate_with_wallet(prompt)
-            if signature:
-                logger.debug("Appending signature to responses.")
-                responses.append(signature)
-            else:
-                logger.debug("Appending empty string to responses due to failed signature generation.")
-                responses.append('')
-        else:
-            logger.debug("Appending empty string to responses for unknown prompts.")
-            responses.append('')
-    logger.debug(f"Responses to send: {responses}")
-    return responses
 
 def interactive_shell(channel):
     """
@@ -129,6 +96,29 @@ def main():
 
         # Perform keyboard-interactive authentication
         logger.info("Initiating keyboard-interactive authentication...")
+        # Define the handler for keyboard-interactive
+        def keyboard_interactive_handler(title, instructions, prompt_list):
+            logger.debug("Keyboard-interactive authentication handler invoked.")
+            responses = []
+            for prompt, echo in prompt_list:
+                logger.debug(f"Prompt received: {prompt} | Echo: {echo}")
+                if "Please sign this message to authenticate:" in prompt:
+                    # The server sends the nonce separately, so we'll wait to receive it
+                    nonce = channel.recv(1024).decode('utf-8').strip()
+                    logger.info(f"Received nonce from server: {nonce}")
+                    signature = authenticate_with_wallet(nonce)
+                    if signature:
+                        logger.debug("Appending signature to responses.")
+                        responses.append(signature)
+                    else:
+                        logger.debug("Appending empty string to responses due to failed signature generation.")
+                        responses.append('')
+                else:
+                    logger.debug("Appending empty string to responses for unknown prompts.")
+                    responses.append('')
+            logger.debug(f"Responses to send: {responses}")
+            return responses
+
         transport.auth_interactive(
             username='walletuser',
             handler=keyboard_interactive_handler
