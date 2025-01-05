@@ -138,7 +138,7 @@ def main():
         logger.error("Authentication failed.")
         sys.exit(1)
     except paramiko.SSHException as e:
-        logger.error(f"SSH connection failed: {e}")
+        logger.error(f"SSH connection failed : {e}")
         sys.exit(1)
     except Exception as e:
         logger.error(f"Connection error: {e}")
