@@ -140,31 +140,39 @@ class WalletAuthServer(paramiko.ServerInterface):
 
 def handle_shell(channel, username, client_address):
     try:
-        channel.send(f"Welcome {username}! You are authenticated via your crypto wallet.\n")
-        channel.send("Type 'exit' to close the connection.\n")
+        # Send welcome messages as bytes
+        channel.send(f"Welcome {username}! You are authenticated via your crypto wallet.\n".encode('utf-8'))
+        channel.send("Type 'exit' to close the connection.\n".encode('utf-8'))
         logger.debug(f"Sent welcome messages to {username}@{client_address}")
 
         while True:
-            channel.send("shell> ")
+            # Send shell prompt as bytes
+            channel.send("shell> ".encode('utf-8'))
             logger.debug(f"Sent shell prompt to {username}@{client_address}")
+            
+            # Receive data from client, decode from bytes to string
             data = channel.recv(1024).decode('utf-8').strip()
             if not data:
                 logger.info(f"No data received from {username}@{client_address}. Closing connection.")
                 break
             logger.info(f"Received command from {username}@{client_address}: {data}")
+            
             if data.lower() == 'exit':
-                channel.send("Goodbye!\n")
+                # Send goodbye message as bytes
+                channel.send("Goodbye!\n".encode('utf-8'))
                 logger.info(f"Exit command received from {username}@{client_address}. Closing connection.")
                 break
             else:
+                # Prepare and send response as bytes
                 response = f"You typed: {data}\n"
-                channel.send(response)
+                channel.send(response.encode('utf-8'))
                 logger.debug(f"Sent response to {username}@{client_address}: {response.strip()}")
     except Exception as e:
         logger.error(f"Exception in shell for {username}@{client_address}: {e}")
     finally:
         logger.info(f"Closing shell for {username}@{client_address}")
         channel.close()
+
 
 def handle_client(client_socket, client_address):
     username = None  # Initialize username
