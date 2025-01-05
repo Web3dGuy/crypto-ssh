@@ -106,7 +106,7 @@ def main():
         # Perform password-based authentication, using signature as password
         logger.info("Initiating password-based authentication with signature as password...")
         transport.auth_password(
-            username='walletuser',  # The username can be arbitrary or matched on the server side
+            username='walletuser',  # The username should match the server's mapping
             password=signature
         )
         logger.info("Authentication attempted.")
@@ -139,7 +139,7 @@ def main():
         if transport:
             transport.close()
             logger.info("SSH transport closed.")
-        logger.info("SSH connection closed. ")
+        logger.info("SSH connection closed.")
 
 if __name__ == "__main__":
     main()
