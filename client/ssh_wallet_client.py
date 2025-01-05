@@ -139,7 +139,7 @@ def main():
         if transport:
             transport.close()
             logger.info("SSH transport closed.")
-        logger.info("SSH connection closed.")
+        logger.info("SSH connection closed. ")
 
 if __name__ == "__main__":
     main()

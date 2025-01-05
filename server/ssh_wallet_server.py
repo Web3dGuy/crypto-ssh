@@ -131,6 +131,10 @@ class WalletAuthServer(paramiko.ServerInterface):
         logger.debug(f"Allowed authentication methods requested for user: {username}")
         return 'password'
 
+    def check_channel_shell_request(self, channel):
+        logger.debug("Shell request received.")
+        return True  # Accept shell requests
+
     def get_username(self):
         return self.username
 
@@ -190,10 +194,15 @@ def handle_client(client_socket, client_address):
         username = server.get_username()
         logger.info(f"User '{username}' authenticated from {client_address}")
 
-        # Start shell handling in a new thread
-        shell_thread = threading.Thread(target=handle_shell, args=(channel, username, client_address))
-        shell_thread.daemon = True
-        shell_thread.start()
+        # Check if the client requested a shell
+        if channel.request_shell():
+            # Start shell handling in a new thread
+            shell_thread = threading.Thread(target=handle_shell, args=(channel, username, client_address))
+            shell_thread.daemon = True
+            shell_thread.start()
+        else:
+            logger.warning(f"Client {client_address} did not request a shell. Closing connection.")
+            channel.close()
 
     except Exception as e:
         logger.error(f"Exception handling client {client_address}: {e}")
