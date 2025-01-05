@@ -77,7 +77,6 @@ class WalletAuthServer(paramiko.ServerInterface):
         self.event = threading.Event()
         self.client_address = client_address
         self.username = None
-        self.nonce = None
 
     def check_channel_request(self, kind, chanid):
         logger.debug(f"Channel request received. Kind: {kind}, ChanID: {chanid}")
@@ -88,40 +87,53 @@ class WalletAuthServer(paramiko.ServerInterface):
         return paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
 
     def check_auth_password(self, username, password):
-        # Disable password authentication
-        logger.debug("Password authentication attempt detected and rejected.")
-        return paramiko.AUTH_FAILED
+        logger.info(f"Password authentication requested for user: {username}")
+        # The password is the signature
+        signature = password
+        logger.debug(f"Received signature: {signature}")
+
+        if not signature.startswith('0x'):
+            logger.warning("Invalid signature format.")
+            return paramiko.AUTH_FAILED
+
+        # Define the known message that was signed
+        AUTH_MESSAGE = "SSH Authentication"
+
+        # Verify the signature against the AUTH_MESSAGE
+        try:
+            recovered_address = w3.eth.account.recover_message(
+                encode_defunct(text=AUTH_MESSAGE),
+                signature=signature
+            ).lower()
+            logger.info(f"Recovered Address: {recovered_address} from {self.client_address}")
+
+            # Check if the recovered address is in the mapping
+            user = WALLET_USER_MAP.get(recovered_address)
+            if user:
+                self.username = user
+                logger.info(f"Authentication successful for user: {user} from {self.client_address}")
+                return paramiko.AUTH_SUCCESSFUL
+            else:
+                logger.warning(f"Authentication failed: Unknown wallet address {recovered_address} from {self.client_address}")
+                return paramiko.AUTH_FAILED
+
+        except Exception as e:
+            logger.error(f"Signature verification error from {self.client_address}: {e}")
+            return paramiko.AUTH_FAILED
 
     def check_auth_publickey(self, username, key):
         # Disable public key authentication
         logger.debug("Public key authentication attempt detected and rejected.")
         return paramiko.AUTH_FAILED
 
+    def check_auth_keyboard_interactive(self, username, submethods, details):
+        # Disable keyboard-interactive authentication
+        logger.debug("Keyboard-interactive authentication attempt detected and rejected.")
+        return paramiko.AUTH_FAILED
+
     def get_allowed_auths(self, username):
         logger.debug(f"Allowed authentication methods requested for user: {username}")
-        return 'keyboard-interactive'
-
-    def check_auth_keyboard_interactive(self, username, submethods, details):
-        logger.info(f"Keyboard-interactive authentication requested for user: {username}")
-        # Generate a unique nonce (challenge) for this authentication attempt
-        nonce = secrets.token_hex(16)
-        NONCE_MAP[self.client_address] = nonce
-        logger.info(f"Generated nonce for {self.client_address}: {nonce}")
-
-        # Define the prompt
-        prompts = [("Please sign this message to authenticate:", False)]
-        logger.debug(f"Prompts sent to {self.client_address}: {prompts}")
-
-        # Send the nonce to the client
-        try:
-            # Send prompts to the client
-            # Paramiko does not provide a direct method to send messages here,
-            # so we will handle it in the handle_client function after authentication
-            self.nonce = nonce
-            return paramiko.AUTH_PARTIALLY_SUCCESSFUL
-        except Exception as e:
-            logger.error(f"Failed to send nonce to {self.client_address}: {e}")
-            return paramiko.AUTH_FAILED
+        return 'password'
 
     def get_username(self):
         return self.username
@@ -154,73 +166,27 @@ def handle_client(client_socket, client_address):
         username = server.get_username()
         logger.info(f"User '{username}' authenticated from {client_address}")
 
-        # At this point, authentication is partially successful (nonce sent)
-        # Now, receive the signature from the client
-        nonce = NONCE_MAP.get(client_address[0])
-        if not nonce:
-            logger.warning(f"No nonce found for {client_address}")
-            channel.send("Authentication failed: No nonce received.\n")
-            channel.close()
-            return
-
-        # Prompt client to send the signature
-        channel.send(f"{nonce}\n")  # Send nonce again as a prompt
-        logger.debug(f"Sent nonce to {client_address}: {nonce}")
-
-        # Receive the signature from the client
-        signature = channel.recv(1024).decode('utf-8').strip()
-        logger.info(f"Received signature from {client_address}: {signature}")
-
-        if not signature:
-            logger.warning(f"No signature received from {client_address}")
-            channel.send("Authentication failed: No signature received.\n")
-            channel.close()
-            return
-
-        # Verify the signature
-        try:
-            recovered_address = w3.eth.account.recover_message(
-                encode_defunct(text=nonce),
-                signature=signature
-            ).lower()
-            logger.info(f"Recovered Address: {recovered_address} from {client_address}")
-        except Exception as e:
-            logger.error(f"Signature verification error from {client_address}: {e}")
-            channel.send("Authentication failed: Signature verification error.\n")
-            channel.close()
-            return
-
-        # Check if the recovered address is in the mapping
-        user = WALLET_USER_MAP.get(recovered_address)
-        if user:
-            logger.info(f"Authentication successful for user: {user} from {client_address}")
-            channel.send(f"Welcome {user}! You are authenticated via your crypto wallet.\n")
-        else:
-            logger.warning(f"Authentication failed: Unknown wallet address {recovered_address} from {client_address}")
-            channel.send("Authentication failed: Unknown wallet address.\n")
-            channel.close()
-            return
-
-        # Provide instructions for the interactive shell
-        channel.send("Type 'exit' to close the connection.\n")
-
         # Start interactive shell
+        channel.send(f"Welcome {username}! You are authenticated via your crypto wallet.\n")
+        channel.send("Type 'exit' to close the connection.\n")
+        logger.debug(f"Sent welcome messages to {username}@{client_address}")
+
         while True:
             channel.send("shell> ")
-            logger.debug(f"Sent shell prompt to {user}@{client_address}")
+            logger.debug(f"Sent shell prompt to {username}@{client_address}")
             data = channel.recv(1024).decode('utf-8').strip()
             if not data:
-                logger.info(f"No data received from {user}@{client_address}. Closing connection.")
+                logger.info(f"No data received from {username}@{client_address}. Closing connection.")
                 break
-            logger.info(f"Received command from {user}@{client_address}: {data}")
+            logger.info(f"Received command from {username}@{client_address}: {data}")
             if data.lower() == 'exit':
                 channel.send("Goodbye!\n")
-                logger.info(f"Exit command received from {user}@{client_address}. Closing connection.")
+                logger.info(f"Exit command received from {username}@{client_address}. Closing connection.")
                 break
             else:
                 response = f"You typed: {data}\n"
                 channel.send(response)
-                logger.debug(f"Sent response to {user}@{client_address}: {response.strip()}")
+                logger.debug(f"Sent response to {username}@{client_address}: {response.strip()}")
 
     except Exception as e:
         logger.error(f"Exception handling client {client_address}: {e}")

@@ -38,14 +38,16 @@ if not WALLET_ADDRESS or not PRIVATE_KEY:
 # Initialize Web3
 w3 = Web3()
 
-def authenticate_with_wallet(nonce):
+# Known authentication message
+AUTH_MESSAGE = "SSH Authentication"
+
+def authenticate_with_wallet(message):
     """
-    Signs the nonce using the private key.
+    Signs the message using the private key.
     """
     try:
-        logger.debug(f"Authenticating with wallet. Nonce received: {nonce}")
-        # Sign the nonce using the private key
-        message = nonce
+        logger.debug(f"Authenticating with wallet. Message to sign: {message}")
+        # Sign the message using the private key
         message_encoded = encode_defunct(text=message)
         signed_message = Account.sign_message(message_encoded, private_key=PRIVATE_KEY)
         signature = '0x' + signed_message.signature.hex()
@@ -94,34 +96,18 @@ def main():
         transport.start_client()
         logger.info("Transport layer initialized and client started.")
 
-        # Perform keyboard-interactive authentication
-        logger.info("Initiating keyboard-interactive authentication...")
-        # Define the handler for keyboard-interactive
-        def keyboard_interactive_handler(title, instructions, prompt_list):
-            logger.debug("Keyboard-interactive authentication handler invoked.")
-            responses = []
-            for prompt, echo in prompt_list:
-                logger.debug(f"Prompt received: {prompt} | Echo: {echo}")
-                if "Please sign this message to authenticate:" in prompt:
-                    # The server sends the nonce separately, so we'll wait to receive it
-                    nonce = channel.recv(1024).decode('utf-8').strip()
-                    logger.info(f"Received nonce from server: {nonce}")
-                    signature = authenticate_with_wallet(nonce)
-                    if signature:
-                        logger.debug("Appending signature to responses.")
-                        responses.append(signature)
-                    else:
-                        logger.debug("Appending empty string to responses due to failed signature generation.")
-                        responses.append('')
-                else:
-                    logger.debug("Appending empty string to responses for unknown prompts.")
-                    responses.append('')
-            logger.debug(f"Responses to send: {responses}")
-            return responses
+        # Generate signature for AUTH_MESSAGE
+        signature = authenticate_with_wallet(AUTH_MESSAGE)
+        if not signature:
+            logger.error("Failed to generate signature.")
+            transport.close()
+            sys.exit(1)
 
-        transport.auth_interactive(
-            username='walletuser',
-            handler=keyboard_interactive_handler
+        # Perform password-based authentication, using signature as password
+        logger.info("Initiating password-based authentication with signature as password...")
+        transport.auth_password(
+            username='walletuser',  # The username can be arbitrary or matched on the server side
+            password=signature
         )
         logger.info("Authentication attempted.")
 
