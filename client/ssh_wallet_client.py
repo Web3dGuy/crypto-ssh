@@ -30,9 +30,9 @@ SERVER_PORT = int(os.getenv('SERVER_PORT', 2200))
 # User Wallet Credentials
 WALLET_ADDRESS = os.getenv('WALLET_ADDRESS', '').lower()
 PRIVATE_KEY = os.getenv('PRIVATE_KEY', '')
-
-if not WALLET_ADDRESS or not PRIVATE_KEY:
-    logger.error("WALLET_ADDRESS and PRIVATE_KEY must be set in .env")
+USER_NAME = os.getenv('USERNAME', 'walletuser').upper()
+if not WALLET_ADDRESS or not PRIVATE_KEY or not USER_NAME:
+    logger.error("USERNAME, WALLET_ADDRESS, and PRIVATE_KEY must be set in .env")
     sys.exit(1)
 
 # Initialize Web3
@@ -106,7 +106,7 @@ def main():
         # Perform password-based authentication, using signature as password
         logger.info("Initiating password-based authentication with signature as password...")
         transport.auth_password(
-            username='walletuser',  # The username should match the server's mapping
+            username=USER_NAME,  # The username should match the server's mapping
             password=signature
         )
         logger.info("Authentication attempted.")
