@@ -121,7 +121,7 @@ def main():
         # Open a session and invoke shell
         channel = transport.open_session()
         channel.invoke_shell()
-        logger.info("Interactive shell session started.")
+        logger.info("Interactive shell session started .")
 
         # Start interactive shell
         interactive_shell(channel)
